@@ -4,17 +4,18 @@
 # author zjp 2016.5.5
 
 import json
+import time
+
 from elasticsearch import Elasticsearch
 from elasticsearch import helpers
-import sys
-import time
 
 
 def completeID(jslist, pes, pindex, rid, simT):  # 补全实体的ID
 
     xlist = [dict(i) for i in jslist]
     _idlist = []
-
+    _typel = []
+    _type = ''
     for ii, item in enumerate(xlist):
         xx = '#ref:' + str(ii)
         _id = -1
@@ -24,39 +25,76 @@ def completeID(jslist, pes, pindex, rid, simT):  # 补全实体的ID
         if len(_name) < 1:
             continue
 
+        addAttr = {}
+
         rs = searchES(pes, pindex, _name)
         scroll_size = rs['hits']['total']
-
         _tpitem = dataformatter(item, pindex, False, '')  # 转化成你从ES中取出来的形式
         if scroll_size == 0:  # 说明这是条新纪录
-            rid, _id, xxr = id_distribute(_tpitem, pindex, rid)  # 分配新id
+            rid, _id, xxr, _type = id_distribute(_tpitem, pindex, rid)  # 分配新id
         else:
             scroll_id = rs['_scroll_id']
             res = pes.scroll(scroll_id=scroll_id, scroll='1m')
-
             tflag = False  # 相似标记
             for doc in res['hits']['hits']:
-                if compareData(_tpitem, doc) > simT:  # 比较两条json记录，有相似的
+                simV = compareData(_tpitem, doc)  # _tpitem是要上传的文件
+                # print(simV)
+                # print(_tpitem)
+                if simV > simT:  # 比较两条json记录，有相似的
+
+                    addAttr = findDif(_tpitem, doc)
                     _id = doc['_id']
-                    xxr = _id + '|' + doc['_source']['name']
+                    _type = doc['_type']
+                    xxr = _type + '/' + _id + '|' + doc['_source']['name']
                     tflag = True
+                    break
+                    # print('AAAAAAAAAAA')
 
             if tflag is False:
-                rid, _id, xxr = id_distribute(_tpitem, pindex, rid)
+                print(_tpitem)
+                rid, _id, xxr, _type = id_distribute(_tpitem, pindex, rid)
         _idlist.append(_id)
-        # print(jslist)
-        jslist = update_jslist(jslist, xx, xxr)
+        _typel.append(_type)
+        jslist = update_jslist(jslist, xx, xxr, addAttr)
 
-    return rid, jslist, _idlist
+    return rid, jslist, _idlist, _typel
+
+
+def findDif(srcS, srcD):
+    a = srcS['_source']  # 要上传的文件
+    b = srcD['_source']  # 数据库中的文件
+
+    t = {}
+
+    flag = False  # 是否存在key相同，但value不相同的属性
+    for i in a:
+        attriflag = False
+        for j in b:
+            if i == j:  # a.key == b.key
+                attriflag = True
+                break
+
+        if attriflag is False:
+            t[i] = a[i]
+
+    return t
 
 
 def dataformatter(iitem, pindex, flag, iid):  # 转化成ES中的格式
 
     x = {}
     xitem = iitem
-    # if flag == False:
     x['_type'] = xitem['_type']
-    # print(xitem['_type'])
+
+    print(x)
+
+
+    if '_subtype' not in xitem:
+        if x['_type'] == 'Org':
+            xitem['_subtype'] = titleJudge(xitem['name'])
+        else:
+            xitem['_subtype'] = ""
+
     x['_subtype'] = xitem['_subtype']
     x['_id'] = iid
     x['_index'] = pindex
@@ -89,13 +127,13 @@ def id_distribute(pitem, pindex, rid):  # 给每一个需要分配ID的item分�
 
     rid[tp_type] = _id_part + 1
 
-    return rid, _id, tag
+    return rid, _id, tag, tp_type
 
 
-def update_jslist(pjslist, xx, xxr):  # 更新JSList，把本地ID替换为ES的ID
-    # print(xx, xxr, pjslist)
-    xlist = []
-    for item in pjslist:
+def update_jslist(pjslist, xx, xxr, ADD):  # 更新JSList，把本地ID替换为ES的ID
+    xlist = pjslist
+
+    for item in xlist:
         for i in item:  # 如果是个list该怎么处理，如果是个str该怎么处理
             if isinstance(item[i], str):
                 if item[i] == xx:
@@ -105,7 +143,8 @@ def update_jslist(pjslist, xx, xxr):  # 更新JSList，把本地ID替换为ES的
                     if j == xx:
                         item[i].remove(xx)
                         item[i].append(xxr)
-        xlist.append(item)
+
+    # xList 要 ADD str
     return xlist
 
 
@@ -118,19 +157,16 @@ def searchES(es, index, jname):
 def compareData(srcS, srcD):
     a = srcS['_source']  # 要上传的文件
     b = srcD['_source']  # 数据库中的文件
-    ll = []
 
     flag = False  # 是否存在key相同，但value不相同的属性
     for i in a:
         attriflag = False
-
         for j in b:
             if i == j:  # a.key == b.key
                 if isinstance(a[i], str) and isinstance(b[j], str):  # 如果a.value和b.value都是字符串
                     if a[i] != b[j] and a[i].find('#ref:') == -1 and b[j].find('#ref:') == -1 and a[i].find(
                             '|') == -1 and b[j].find('|') == -1:  # a.value != b.value
                         attriflag = True
-                        break
 
         if attriflag is True:
             flag = True
@@ -147,29 +183,113 @@ def updateES(es, pindex, file, idl):
     bodys = list()
     for i, item in enumerate(file):
         x = dataformatter(item, pindex, True, idl[i])
+        # es.update()
+        # print(x)
+        # es.update(index=x['_index'], doc_type=x['_type'], id=x['_id'], document=x)
         bodys.append(x)
+    print("bodys", bodys)
     helpers.bulk(es, bodys)
-
+    import time
+    time.sleep(1)
+    rs = es.search(index='test1', search_type='query_then_fetch',
+                   body={"query": {"match_phrase": {"name": {"query": "上海仙申医教仪器厂"}}}})
+    print(type(rs), rs)
 
 # 更新Gstore
 # def updateGStore():
-def fetch_Gstore_triple(local, _xx, _ii):
-    localappend = local
-    return localappend
+def fetch_Gstore_triple(_xx, _ii, _jj):
+    rdf = []
+
+    for i in range(0, len(_ii)):
+        j = _xx[i]
+        for item in j:
+            if isinstance(j[item], str):
+                _x = j[item].find('|')
+                if _x != -1:
+                    _j = j[item][0:_x]
+                else:
+                    _j = j[item]
+                _ss = str('<' + _jj[i] + '/' + _ii[i] + '>\t<' + item + '>\t<' + _j + '>')
+                if _ss not in rdf:
+                    rdf.append(_ss)
+            else:
+                for k in j[item]:
+                    _x = k.find('|')
+                    if _x != -1:
+                        _j = k[0:_x]
+                    else:
+                        _j = k
+                    _ss = str('<' + _jj[i] + '/' + _ii[i] + '>\t<' + item + '>\t<' + _j + '>')
+                    if _ss not in rdf:
+                        rdf.append(_ss)
+
+    return rdf
 
 
-def updateDataBase(jslist, pes, pindex, rid, localTriple, simT):
-    rid, xlist, _idlist = completeID(jslist, pes, pindex, rid, simT)  # 补全ID
+def updateDataBase(jslist, pes, pindex, rid, prdfs, simT):
+    rid, xlist, _idlist, _typelist = completeID(jslist, pes, pindex, rid, simT)  # 补全ID
     updateES(pes, pindex, xlist, _idlist)  # 更新ES
-    fetch_Gstore_triple(localTriple, xlist, _idlist)  # 抽取三元组
-    return rid
+    _rr = fetch_Gstore_triple(xlist, _idlist, _typelist)  # 抽取三元组
+    return rid, _rr
 
+
+def dump_local(pridfile, pridpath, prdfsfile, prdfspath):
+    """
+
+    写本地文件，Gstore 的 rdf 文件
+
+    """
+    _f = open(prdfspath, 'a')
+    for line in prdfsfile:
+        _f.write(line + '\n')
+
+    """
+
+    写本地文件，rid 的文件
+
+    """
+    _f = open(pridpath, 'w')
+    _f.writelines(json.dumps(pridfile))
+    _f.close()
+
+    return
+
+
+def titleJudge(title):  # 通过标题断定类别
+    if title is None:
+        return None
+
+    if title.find('公司') or title.find('集团') or title.find('厂'):
+        return 'Corporation'
+
+    if title.find('大学'):
+        if title.find('研究室') or title.find('实验室') or title.find('实验区'):
+            return 'Educational'
+
+    x = title.find('(')
+    y = title.find(')')
+
+    if x == -1:
+        x = title.find('（')
+        y = title.find('）')
+
+    if x != -1:
+        title = title.replace(title[x, y + 1], '')
+
+    if title.endswith('大学') or title.endswith('学校') or title.endswith('分校') or title.endswith('中学') or title.endswith(
+            '中专') or title.endswith('学校') or title.endswith('学院') or title.endswith('科学院') or title.endswith(
+            '图书馆') or title.endswith('中心校'):
+        return 'Educational'
+
+    return 'Research'
 
 if __name__ == "__main__":
     time1 = time.time()
 
-    p1 = 'data/idEachClass'
-    p2 = 'data/test'
+    p1 = 'Data/idEachClass'
+    p2 = 'Data/wanfang-1000.json'
+    prdfsp = 'Data/localTriple.dat'
+
     host = '192.168.120.90'
     port = '9200'
     simT = 0.5
@@ -180,6 +300,11 @@ if __name__ == "__main__":
     ss = rf.readline()
     rid = json.loads(ss)
 
+    rf1 = open(prdfsp)
+    localrdfs = []
+    for item in rf1:
+        localrdfs.append(item)
+
     # 建立与ES通信的对象
     es = Elasticsearch(hosts=host, port=port, timeout=1000)
     es.indices.create(index=pindex, ignore=400)
@@ -187,16 +312,13 @@ if __name__ == "__main__":
     ks = open(p2, encoding='utf8')
     tt = ks.readlines()
 
-    localT = 'XXX'
-
     for ii in tt:
         xx = json.loads(ii)
-        rid = updateDataBase(xx, es, pindex, rid, localT, simT)
-        print('finish')
+        rid, localrdfs = updateDataBase(xx, es, pindex, rid, localrdfs, simT)
+        dump_local(rid, p1, localrdfs, prdfsp)
+        #es.update()
 
-    f = open('data\idEachClass', 'w')
-    f.writelines(json.dumps(rid))
-    f.close()
+        print('finish')
 
     time2 = time.time()
     print(time2 - time1)
