@@ -22,8 +22,7 @@ def completeID(jslist, pes, pindex, rid, simT):  # 补全实体的ID
         _name = item.get('name')
         xxr = ''
 
-        if len(_name) < 1:
-            continue
+
 
         addAttr = {}
 
@@ -51,11 +50,12 @@ def completeID(jslist, pes, pindex, rid, simT):  # 补全实体的ID
                     # print('AAAAAAAAAAA')
 
             if tflag is False:
-                print(_tpitem)
+               # print(_tpitem)
                 rid, _id, xxr, _type = id_distribute(_tpitem, pindex, rid)
         _idlist.append(_id)
         _typel.append(_type)
         jslist = update_jslist(jslist, xx, xxr, addAttr)
+
 
     return rid, jslist, _idlist, _typel
 
@@ -86,12 +86,14 @@ def dataformatter(iitem, pindex, flag, iid):  # 转化成ES中的格式
     xitem = iitem
     x['_type'] = xitem['_type']
 
-    print(x)
+    #print(x)
 
 
     if '_subtype' not in xitem:
         if x['_type'] == 'Org':
             xitem['_subtype'] = titleJudge(xitem['name'])
+            #print(xitem['name'])
+            #print(xitem['_subtype'])
         else:
             xitem['_subtype'] = ""
 
@@ -111,21 +113,31 @@ def dataformatter(iitem, pindex, flag, iid):  # 转化成ES中的格式
 
 def id_distribute(pitem, pindex, rid):  # 给每一个需要分配ID的item分配ID
 
-    if len(pitem['_subtype']) > 0:
-        tp_type = pitem['_subtype']
+    #if len(pitem['_subtype']) > 0:
+    #    tp_type = pitem['_subtype']
+    #else:
+    tp_type = pitem['_type']
+
+    if pitem['_type'] == 'Org':
+        _id_part = int(rid[pitem['_subtype']])
     else:
-        tp_type = pitem['_type']
+        _id_part = int(rid[tp_type])
 
-    _id_part = int(rid[tp_type])
-
-    if pitem['_type'] != 'Pers':
+    if pitem['_type'] == 'Org':
         _id = pitem['_subtype'] + '_' + str(_id_part)
     else:
         _id = str(_id_part)
 
     tag = pitem['_type'] + '/' + _id + '|' + pitem['_source']['name']
 
-    rid[tp_type] = _id_part + 1
+    #rid[tp_type] = _id_part + 1
+
+    if pitem['_type'] == 'Org':
+     #   _id_part = int(rid[pitem['_subtype']])
+        rid[pitem['_subtype']] = _id_part + 1
+    else:
+      #  _id_part = int(rid[tp_type])
+        rid[tp_type] = _id_part + 1
 
     return rid, _id, tag, tp_type
 
@@ -181,20 +193,18 @@ def compareData(srcS, srcD):
 # 更新ES
 def updateES(es, pindex, file, idl):
     bodys = list()
+
     for i, item in enumerate(file):
+        #if item['name'] is None:
+       #     continue
         x = dataformatter(item, pindex, True, idl[i])
         # es.update()
         # print(x)
         # es.update(index=x['_index'], doc_type=x['_type'], id=x['_id'], document=x)
         bodys.append(x)
-    print("bodys", bodys)
+    #print("bodys", bodys)
     helpers.bulk(es, bodys)
-    import time
-    time.sleep(1)
-    rs = es.search(index='test1', search_type='query_then_fetch',
-                   body={"query": {"match_phrase": {"name": {"query": "上海仙申医教仪器厂"}}}})
-    print(type(rs), rs)
-
+    return bodys
 # 更新Gstore
 # def updateGStore():
 def fetch_Gstore_triple(_xx, _ii, _jj):
@@ -206,30 +216,40 @@ def fetch_Gstore_triple(_xx, _ii, _jj):
             if isinstance(j[item], str):
                 _x = j[item].find('|')
                 if _x != -1:
-                    _j = j[item][0:_x]
+                    _j = j[item][0:_x].replace('<', '_D').replace('>', 'D_')
+                    _ss = str('<ex:' + _jj[i] + '/' + _ii[i] + '>\t<ub:' + item + '>\t<ex:' + _j + '>.')
                 else:
-                    _j = j[item]
-                _ss = str('<' + _jj[i] + '/' + _ii[i] + '>\t<' + item + '>\t<' + _j + '>')
+                    _j = j[item].replace('<', '_D').replace('>', 'D_')
+                    _ss = str('<ex:' + _jj[i] + '/' + _ii[i] + '>\t<ub:' + item + '>\t<' + _j + '>.')
                 if _ss not in rdf:
-                    rdf.append(_ss)
+                    rdf.append(filterStr(_ss)) #<  &lt;  > &gt;
             else:
                 for k in j[item]:
                     _x = k.find('|')
                     if _x != -1:
-                        _j = k[0:_x]
+                        _j = k[0:_x].replace('<', '_D').replace('>', 'D_')
+                        _ss = str('<ex:' + _jj[i] + '/' + _ii[i] + '>\t<ub:' + item + '>\t<ex:' + _j + '>.')
                     else:
-                        _j = k
-                    _ss = str('<' + _jj[i] + '/' + _ii[i] + '>\t<' + item + '>\t<' + _j + '>')
+                        _j = k.replace('<', '_D').replace('>', 'D_')
+                        _ss = str('<ex:' + _jj[i] + '/' + _ii[i] + '>\t<ub:' + item + '>\t<' + _j + '>.')
                     if _ss not in rdf:
-                        rdf.append(_ss)
+                        rdf.append(filterStr(_ss))
 
     return rdf
 
 
 def updateDataBase(jslist, pes, pindex, rid, prdfs, simT):
+
+   # time1 = time.time()
     rid, xlist, _idlist, _typelist = completeID(jslist, pes, pindex, rid, simT)  # 补全ID
+   # time2 = time.time()
     updateES(pes, pindex, xlist, _idlist)  # 更新ES
+   # print(rid)
+   # time3 = time.time()
     _rr = fetch_Gstore_triple(xlist, _idlist, _typelist)  # 抽取三元组
+   # time4 = time.time()
+
+   # print(time2-time1, time3-time2, time4-time3)
     return rid, _rr
 
 
@@ -239,7 +259,7 @@ def dump_local(pridfile, pridpath, prdfsfile, prdfspath):
     写本地文件，Gstore 的 rdf 文件
 
     """
-    _f = open(prdfspath, 'a')
+    _f = open(prdfspath, 'a', encoding='utf8')
     for line in prdfsfile:
         _f.write(line + '\n')
 
@@ -248,39 +268,43 @@ def dump_local(pridfile, pridpath, prdfsfile, prdfspath):
     写本地文件，rid 的文件
 
     """
-    _f = open(pridpath, 'w')
+    _f = open(pridpath, 'w', encoding='utf8')
     _f.writelines(json.dumps(pridfile))
     _f.close()
 
     return
 
+def filterStr(srS):
+    Ret = srS.replace('\n', '\\n')
+    return Ret
+
 
 def titleJudge(title):  # 通过标题断定类别
     if title is None:
         return None
-
-    if title.find('公司') or title.find('集团') or title.find('厂'):
+    #print('dDDD', title)
+    if title.find('公司') != -1 or title.find('集团') != -1 or title.find('厂') != -1:
         return 'Corporation'
 
-    if title.find('大学'):
-        if title.find('研究室') or title.find('实验室') or title.find('实验区'):
+    if title.find('大学') != -1:
+        if title.find('研究室') != -1 or title.find('实验室')  != -1 or title.find('实验区') != -1:
             return 'Educational'
 
     x = title.find('(')
     y = title.find(')')
 
-    if x == -1:
-        x = title.find('（')
-        y = title.find('）')
 
-    if x != -1:
-        title = title.replace(title[x, y + 1], '')
+    if x != -1 and y != -1:
+       # print(x, y)
+        #print(title)
+        title = title.replace(title[x: y+1], '')
+        #print(title)
 
-    if title.endswith('大学') or title.endswith('学校') or title.endswith('分校') or title.endswith('中学') or title.endswith(
-            '中专') or title.endswith('学校') or title.endswith('学院') or title.endswith('科学院') or title.endswith(
-            '图书馆') or title.endswith('中心校'):
+    if title.endswith('大学') != -1 or title.endswith('学校') != -1 or title.endswith('分校') != -1 or title.endswith('中学') != -1 or title.endswith(
+            '中专') != -1 or title.endswith('学校') != -1 or title.endswith('学院') != -1 or title.endswith('科学院') != -1 or title.endswith(
+            '图书馆') != -1 or title.endswith('中心校') != -1 or title.endswith('系') != -1 or title.endswith('学院') != -1:
         return 'Educational'
-
+   # print('XXXXXXX', title)
     return 'Research'
 
 if __name__ == "__main__":
@@ -293,14 +317,14 @@ if __name__ == "__main__":
     host = '192.168.120.90'
     port = '9200'
     simT = 0.5
-    pindex = 'test1'
+    pindex = 'scholarkr-backpack1'
 
     # 读数据记录文件
-    rf = open(p1)
+    rf = open(p1, encoding='utf8')
     ss = rf.readline()
     rid = json.loads(ss)
 
-    rf1 = open(prdfsp)
+    rf1 = open(prdfsp, encoding='utf8')
     localrdfs = []
     for item in rf1:
         localrdfs.append(item)
@@ -309,16 +333,42 @@ if __name__ == "__main__":
     es = Elasticsearch(hosts=host, port=port, timeout=1000)
     es.indices.create(index=pindex, ignore=400)
 
-    ks = open(p2, encoding='utf8')
-    tt = ks.readlines()
+    #ks = open(p2, encoding='utf8')
+    #tt = ks.readlines()
+    X = open('Data/WhichLine', encoding='utf8')
+    T = X.readline()
+    C = int(T)
 
-    for ii in tt:
-        xx = json.loads(ii)
-        rid, localrdfs = updateDataBase(xx, es, pindex, rid, localrdfs, simT)
-        dump_local(rid, p1, localrdfs, prdfsp)
+    countFlag = 0
+    for ii in open(p2, encoding='utf8'):
+
+        countFlag = countFlag+1
+        if countFlag >= C:
+            xx = json.loads(ii)
+
+            flag = False
+            for jj in xx:
+                if jj['name'] is None:
+                    flag = True
+                    break
+            if flag is True:
+                continue
+
+            rid, localrdfs = updateDataBase(xx, es, pindex, rid, localrdfs, simT)
+            dump_local(rid, p1, localrdfs, prdfsp)
+
+
+            _f = open('Data/WhichLine', 'w', encoding='utf8')
+            _f.writelines(str(countFlag))
+            _f.close()
+
+
+        print(countFlag)
+        #
+       # print(rid)
         #es.update()
 
-        print('finish')
+      #  print('finish')
 
     time2 = time.time()
     print(time2 - time1)
