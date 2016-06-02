@@ -32,7 +32,7 @@ def DBa_to_DBb(host, port, indexA, indexB):
                 doc['_index'] = indexB
                 bodys.append(doc)
                 n += 1
-            if (n == 10000):
+            if (n == 3000):
                 helpers.bulk(esB, bodys)
                 bodys = []
                 n = 0
@@ -54,6 +54,6 @@ def DBa_to_DBb(host, port, indexA, indexB):
 
 if __name__ == "__main__":
     time1 = time.time()
-    DBa_to_DBb("192.168.120.90", 9200, "scholarkr-backpack", "scholarkr")
+    DBa_to_DBb("192.168.120.90", 9200, "scholarkr-backpack", "zjp-index:scholarkr(1)")
     time2 = time.time()
     print(time2 - time1)

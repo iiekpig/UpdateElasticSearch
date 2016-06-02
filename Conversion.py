@@ -6,7 +6,7 @@
 
 import json
 import time
-import queue
+import os
 
 from elasticsearch import Elasticsearch
 from elasticsearch import helpers
@@ -16,8 +16,8 @@ from elasticsearch import helpers
 """
 def completeID(jslist, pes, pindex, rid, simT):  # 补全实体的ID
 
-    #print('jslist', jslist)
     xlist = [dict(i) for i in jslist]
+
     _idlist = []
     _typel = []
     _type = ''
@@ -29,15 +29,10 @@ def completeID(jslist, pes, pindex, rid, simT):  # 补全实体的ID
 
         addAttr = {}
 
-       # time1 = time.time()
         rs = searchES(pes, pindex, _name)
-       # time2 = time.time()
-       # print(time2-time1)
         scroll_size = rs['hits']['total']
-        #print(item)
         item = xlist[ii]
         _tpitem = dataformatter(item, pindex, False, '')  # 转化成你从ES中取出来的形式
-        #print('jslist3', jslist)
         if scroll_size == 0:  # 说明这是条新纪录
             rid, _id, xxr, _type = id_distribute(_tpitem, pindex, rid)  # 分配新id
         else:
@@ -65,6 +60,7 @@ def completeID(jslist, pes, pindex, rid, simT):  # 补全实体的ID
 
         for kk in addAttr:
             jslist[ii][kk] = addAttr[kk]  #这里有错
+        #jslist[ii] = complete_addAttr(jslist[ii], addAttr)
         #print('jslist2', jslist)
         #解放军报
 
@@ -99,8 +95,11 @@ def completeID(jslist, pes, pindex, rid, simT):  # 补全实体的ID
 
     return rid, jslist, _idlist, _typel
 
+
 """
 找不同
+srcS: 要上传的文件
+srcD：数据库中的文件
 """
 def findDif(srcS, srcD):
     a = srcS['_source']  # 要上传的文件
@@ -116,9 +115,13 @@ def findDif(srcS, srcD):
         if isinstance(a[i], str):
             if a[i].find('#ref') == -1:
                 t[i] = a[i]
-            elif isinstance(a[i], list):
-                for j in a[i]:
-                    if j.find('#ref') == -1:
+        elif isinstance(a[i], list):
+            for j in a[i]:
+                if isinstance(j, dict):
+                    if j not in t[i]:
+                        t[i].append(j)
+                else:
+                    if j.find('#ref') == -1 and j not in t[i]:
                         t[i].append(j)
 
     return t
@@ -203,15 +206,11 @@ def update_jslist(pjslist, xx, xxr):  # 更新JSList，把本地ID替换为ES的
                     if j == xx:
                         item[i].remove(xx)
                         item[i].append(xxr)
-    #print('clist', clist)
-
-
-    # xList 要 ADD str
     return clist
 
 
 def searchES(es, index, jname):
-    #print('jname=', jname)
+
     rs = es.search(index=index, scroll='1m', search_type='scan', size=10000,
                    body={"query": {"match_phrase": {"name": {"query": jname}}}})
     return rs
@@ -273,8 +272,13 @@ def fetch_Gstore_triple(_xx, _ii, _jj):
                     _ss = str('<ex:' + _jj[i] + '/' + _ii[i] + '>\t<ub:' + item + '>\t<' + _j + '>.')
                 if _ss not in rdf:
                     rdf.append(filterStr(_ss)) #<  &lt;  > &gt;
-            else:
+            elif isinstance(j[item], list):
+                #print('j', j)
+                #print('j[item]', j[item])
+
                 for k in j[item]:
+                    if isinstance(k, dict):
+                        break
                     _x = k.find('|')
                     if _x != -1:
                         _j = k[0:_x].replace('<', '_D').replace('>', 'D_')
@@ -291,7 +295,7 @@ def fetch_Gstore_triple(_xx, _ii, _jj):
 def updateDataBase(jslist, pes, pindex, rid, prdfs, simT):
 
    # time1 = time.time()
-    rid, xlist, _idlist, _typelist = completeID(jslist, pes, pindex, rid, simT)  # 补全ID
+    rid, xlist, _idlist, _typelist = completeID(json.loads(jslist), pes, pindex, rid, simT)  # 补全ID
    # time2 = time.time()
     es_items = ES_format(pes, pindex, xlist, _idlist)  # 更新ES
     #print(rid)
@@ -366,186 +370,114 @@ def titleJudge(title):  # 通过标题断定类别
    # print('XXXXXXX', title)
     return 'Research'
 
+def bulk_file(fileP, es, rid, localrdfs, threadHold, prdfsp, p1):
 
-"""
-处理王玉斌数据的队列
-
-filePath：  要上传到ES的文件的位置
-es：        与ElasticSearch数据库通信的对象
-rid：       记录 每种类别数据 的ID
-localrdfs： rdf三元组
-C:          记录文件已经处理到哪条数据记录，下次就从哪条重新开始，省得前面的还得传一遍
-
-"""
-def process_queue(fileP, es, rid, localrdfs, threadHold, C, prdfsp, p1):
-
-    #_f = open('finalData/dlog.txt', 'a', encoding='utf8')
-    #qlen = 5000
-    item_q = list()
-    name_q = list()
-    countFlag = 0
-    sum_time = 0
-    #C = 410346
-    for ii in open(fileP, encoding='utf8'):
-
-        countFlag = countFlag+1     #处理到第几条文件了，从1开始
-        #print(countFlag)
-        if (countFlag%1000) == 0:
-            print(countFlag)
-
-        if countFlag >= C:
-
-            time1 = time.time()
-            xx = json.loads(ii)
-
-            #name属性为空的不做处理
-            flag = False                #name为空标记
-            for jj in xx:
-                if jj['name'] is None or jj['name'] == '' or jj['_type'] is None or jj['_type'] == '':
-                    flag = True
-                    break
-            if flag is True:            #如果name为空，不做处理
-                continue
-
-            name_set = set()
-            #初始化队列
-            if len(name_q) == 0:
-                for jj in xx:
-                    name_set.add(jj['name'])
-
-                name_q.append(name_set)
-                _tpc = list()
-                _tpc.append(xx)
-                item_q.append(_tpc)
-
-            else:                                      #入队列操作
-                _t = -1
-                k = -1
-
-                for k,v in enumerate(name_q):          #名字队列集合
-                    flag = False
-                    for jj in xx:                      #判定条目的name
-                        if jj['name'] in v:
-                            flag = True
-                            break
-                    if flag == False:
-                        _t = k                         #第k条记录有名字重复的
-                        break
-
-                if _t == -1:                           #前面的名字都有重复的
-                    name_set.clear()
-                    for jj in xx:
-                        name_set.add(jj['name'])
-                    _tpc = list()
-                    _tpc.append(xx)
-
-                    name_q.append(name_set)
-                    item_q.append(_tpc)
-                else:                                  #说明队列不满
-                    for jj in xx:
-                        name_q[_t].add(jj['name'])
-                    item_q[_t].append(xx)
-
-            time2 = time.time()
-            sum_time = sum_time +(time2-time1)
-
-            #当队头元素大于一定数量的时候，出队列，bulk到ES
-            #"""
-
-            if len(item_q[0]) > threadHold:
-                qhead = item_q[0]
-                #time.sleep(5)
-                bodys = list()
-                for _tp in qhead:
-
-                    rid, localrdfs, es_its = updateDataBase(_tp, es, pindex, rid, localrdfs, simT)
-                    for _b in es_its:
-                        bodys.append(_b)
+    bodys = list()
+    for jj in open(fileP, encoding='utf8'):
+        rid, localrdfs, es_its = updateDataBase(jj, es, pindex, rid, localrdfs, simT)
+        for _b in es_its:
+            bodys.append(_b)
+            if len(bodys)%3000 == 0:
                 helpers.bulk(es, bodys)
                 dump_local(rid, p1, localrdfs, prdfsp)
-                time3 = time.time()
-                print(countFlag, sum_time, time3-time2)
-                sum_time = 0
-               # print(len(item_q))
-                print('len(name_q):',len(name_q))
-
-
-                del item_q[0]
-                del name_q[0]
-
-                #if len(item_q) > qlen:
-                if len(item_q) > 5000:
-                    for _ix in range(0, min(300, int(len(item_q)/2))):
-                       # if len(item_q[0]) < 300:
-                       #     break
-                        qhead = item_q[0]
-                        print(len(item_q[0]))
-
-                        #time.sleep(5)
-                        time4 = time.time()
-                        bodys = list()
-                        for _tp in qhead:
-                           # print(_tp)
-                            rid, localrdfs, es_its = updateDataBase(_tp, es, pindex, rid, localrdfs, simT)
-                            for _b in es_its:
-                                bodys.append(_b)
-                        helpers.bulk(es, bodys)
-                        dump_local(rid, p1, localrdfs, prdfsp)
-                        time3 = time.time()
-                        print(countFlag, len(item_q[0]), time3-time4)
-                        if time3-time4 < 3:
-                            time.sleep(3-(time3-time4))
-
-
-                       # print(len(item_q))
-                       # print('len(name_q):',len(name_q))
-                        del item_q[0]
-                        del name_q[0]
-                    sum_time = 0
-
-
-               # print(item_q)
-               # print(name_q)
-               # print(len(item_q))
-               # print(len(name_q))
-            #"""
-                #print(time2 - time1)
-            #print(len(item_q))    #_f.close()
-    while len(item_q) > 0:
-        qhead = item_q[0]
-        time4 = time.time()
-        bodys = list()
-        for _tp in qhead:
-            rid, localrdfs, es_its = updateDataBase(_tp, es, pindex, rid, localrdfs, simT)
-            for _b in es_its:
-                bodys.append(_b)
+    if len(bodys) > 0:
         helpers.bulk(es, bodys)
         dump_local(rid, p1, localrdfs, prdfsp)
-        time3 = time.time()
-        if time3-time4 < 3:
-            time.sleep(3-(time3-time4))
-        print('len(name_q):',len(name_q[0]), len(name_q[0]))
 
-        del item_q[0]
-        del name_q[0]
     return
 
-def bulk_qhead(qhead):
-    pass
+"""
+为了不重名，把重名条目分散到不同文件中去
+"""
+def items_distribute(fileP):
+
+    name_q = list()
+    countFlag = -1
+
+    mm = [-1 for i in range(900000)]
+
+    time1 = time.time()
+    for ii in open(fileP, encoding='utf8'):
+
+        countFlag = countFlag+1
+        xx = json.loads(ii)
+
+        #name属性为空的不做处理
+        flag = False                #name为空标记
+        for jj in xx:
+            if jj['name'] is None or jj['name'] == '' or jj['_type'] is None or jj['_type'] == '':
+                flag = True
+                break
+        if flag is True:            #如果name为空，不做处理
+            mm[countFlag] = -1
+            continue
+
+        name_set = set()
+        #初始化队列
+        if len(name_q) == 0:
+            for jj in xx:
+                name_set.add(jj['name'])
+
+            name_q.append(name_set)
+            mm[countFlag] = 0                      #这个今后要放入第0个文件
+
+        else:                                      #入队列操作
+            _t = -1
+            k = -1
+
+            for k,v in enumerate(name_q):          #名字队列集合
+                flag = False
+                for jj in xx:                      #判定条目的name
+                    if jj['name'] in v:
+                        flag = True
+                        break
+                if flag == False:
+                    _t = k                         #第k条记录有名字重复的
+                    break
+
+            if _t == -1:                           #前面的名字都有重复的
+                name_set.clear()
+                for jj in xx:
+                    name_set.add(jj['name'])
+                mm[countFlag] = len(name_q)
+
+                name_q.append(name_set)
+            else:                                  #说明队列不满
+                for jj in xx:
+                    name_q[_t].add(jj['name'])
+                mm[countFlag] = _t
+    return mm
+
+def write_item_inFile(fileP, mm):
+
+    countFlag = -1
+    for ii in open(fileP, encoding='utf8'):
+        countFlag = countFlag+1
+        if mm[countFlag] == -1:
+            continue
+        f = open('tmp_dat/'+str(mm[countFlag]), 'a')
+        f.write(ii)
+        f.close()
+    return
+
 if __name__ == "__main__":
     time1 = time.time()
 
     dir = 'finalData'
     p1 = dir+'/id_each_class'
-    p2 = dir+'/wanfang-81W.json'
+    p2 = dir+'/cnki-dongfeng.json'
     prdfsp = dir+'/localTriple.dat'
 
     host = '192.168.120.90'
     port = '9200'
     simT = 0.5
-    pindex = 'scholarkr'
+    pindex = 'zjp-index:scholarkr(1)'
 
+    #先把1文件分到若干个文件中去
+    mm = items_distribute(p2)
+    write_item_inFile(p2, mm)
     # 读数据记录文件
+
     rf = open(p1, encoding='utf8')
     ss = rf.readline()
     rid = json.loads(ss)
@@ -559,8 +491,18 @@ if __name__ == "__main__":
     es = Elasticsearch(hosts=host, port=port, timeout=1000)
     es.indices.create(index=pindex, ignore=400)
 
-    C = 0 #控制从第几条记录开始处理
-    time1 = time.time()
-    process_queue(p2, es, rid, localrdfs, 4000, 0, prdfsp, p1)
-    time2 = time.time()
-    print(time2-time1)
+
+    #遍历这若干个文件
+    fileNum = len(os.listdir('tmp_dat'))
+    print(fileNum)
+    for ii in range(fileNum):
+        fP = 'tmp_dat/'+str(ii)
+        time1 = time.time()
+        bulk_file(fP, es, rid, localrdfs, 3000, prdfsp, p1)
+        time2 = time.time()
+        if time2 - time1 < 2:
+            time.sleep(2-time2+time1)
+        print(ii, time2-time1)
+        os.remove(fP)
+
+    #删除生成的临时文件

@@ -137,14 +137,14 @@ if __name__ == "__main__":
     print("Time start:%s" %time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))#开始时间
 
 #备份
-    #QUERY("192.168.120.90", 9200, "scholarkr2", "", "Data/data.dat",id_saved = True)
+    #QUERY("192.168.120.90", 9200, "scholarkr", "", "Data/data.dat",id_saved = True)
 #查询
     #query = {"query":{"match_phrase":{"name": "中国科学院信息工程研究所"}}}
     #QUERY("192.168.120.90", 9200, "scholarkr","Org", "Data/data-2.dat",query=query)
 #新建
     #CREATE("192.168.120.00", 9200, "test","Paper", "data.dat")
 #导入
-    INDEX("192.168.120.90", 9200, "scholarkr","", "Data/data.dat")
+    #INDEX("192.168.120.90", 9200, "scholarkr","", "Data/data.dat")
 #更新
     #UPDATE("192.168.120.00", 9200, "test","Paper", "data.dat")
 
